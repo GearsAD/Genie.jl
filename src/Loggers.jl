@@ -3,12 +3,68 @@ Provides logging functionality for Genie apps.
 """
 module Loggers
 
-using Memento, Millboard, Dates
+using Dates
 using Genie
+using Logging
 
 import Base.log
-export log
+export log, initialize_logging
 
+global _isloggingconfigured = false
+
+function _default_logcolor(level)
+    level < Logging.Info  ? Base.debug_color() :
+    level < Logging.Warn  ? Base.info_color()  :
+    level < Logging.Error ? Base.warn_color()  :
+                    Base.error_color()
+end
+"""
+  Customized logging format function.
+"""
+function metafmt(level, _module, group, id, file, line)
+  # Set the prefix and suffix for the logging message here.
+  color = _default_logcolor(level)
+  prefix = "[$(string(now()))] $(level == Logging.Warn ? "Warning" : string(level)):"
+  suffix = ""
+  Logging.Info <= level < Logging.Warn && return color, prefix, suffix
+  _module !== nothing && (suffix *= "$(_module)")
+  if file !== nothing
+    _module !== nothing && (suffix *= " ")
+    suffix *= Base.contractuser(file)
+    if line !== nothing
+      suffix *= ":$(isa(line, UnitRange) ? "$(first(line))-$(last(line))" : line)"
+    end
+  end
+  !isempty(suffix) && (suffix = "@ " * suffix)
+  return color, prefix, suffix
+end
+
+function _logstringtologgingenum(level::Union{String,Symbol})::Logging.LogLevel
+  level = string(level)
+  level == "debug" && return Logging.Debug
+  level == "info" && return Logging.Info
+  level == "warn" && return Logging.Warn
+  level == "error" && return Logging.Error
+  # Default
+  return Logging.Info
+end
+
+"""
+Initialize the logging.
+"""
+function initialize_logging()::Nothing
+  global _isloggingconfigured
+  if !_isloggingconfigured
+    @info "Configuring a global logger to log level: '$(Genie.config.log_level)'. Message after this will be filtered, you can change this in your config file for your environment."
+    # Default to stderr.
+    #TODO: Can set to write to a stream here with the first parameter if file logging should be done.
+    # Personally I just keep everything working on console so that console loggers like Splunk and Kibana can just capture them
+    consoleLogger = ConsoleLogger(stderr, _logstringtologgingenum(Genie.config.log_level), meta_formatter=metafmt)
+    global_logger(consoleLogger)
+    _isloggingconfigured = true
+  end
+  return nothing
+end
 
 """
     log(message, level = "info"; showst::Bool = true) :: Nothing
@@ -16,7 +72,7 @@ export log
     log(message::String, level::Symbol) :: Nothing
 
 Logs `message` to all configured logs (STDOUT, FILE, etc) by delegating to `Lumberjack`.
-Supported values for `level` are "info", "warn", "debug", "err" / "error", "critical".
+Supported values for `level` are "info", "warn", "debug", "error".
 If `level` is `error` or `critical` it will also dump the stacktrace onto STDOUT.
 
 # Examples
@@ -27,32 +83,19 @@ function log(message::Union{String,Symbol,Number,Exception}, level::Union{String
   message = string(message)
   level = string(level)
 
-  if level == "err" || level == "critical"
-    level = "warn"
-  elseif level == "debug"
-    level = "info"
-  else
-    level = "info"
-  end
-
-  root_logger = try
-    Memento.config!(level |> string; fmt="[{date}|{level}]: {msg}")
-  catch ex
-    Memento.config(string(level))
+  # Just a check in case it wasn't initialized.
+  global _isloggingconfigured
+  if !_isloggingconfigured
+    initializeLogging()
   end
 
   try
-    if isfile(log_path())
-      file_logger = getlogger(@__MODULE__)
-      setlevel!(file_logger, Genie.config.log_level |> string)
-      push!(file_logger, DefaultHandler(log_path(), DefaultFormatter("[{date}|{level}]: {msg}")))
-
-      Base.invoke(Core.eval(@__MODULE__, Meta.parse("Memento.$level")), Tuple{typeof(file_logger),typeof(message)}, file_logger, message)
-    else
-      Base.invoke(Core.eval(@__MODULE__, Meta.parse("Memento.$level")), Tuple{typeof(root_logger),typeof(message)}, root_logger, message)
-    end
+    level == "debug" && @debug message
+    level == "info" && @info message
+    level == "warn" && @warn message
+    (level == "error" || level == "err" || level == "critical") && @error message
   catch ex
-    println(string(ex))
+    @info string(ex)
   end
 
   nothing
