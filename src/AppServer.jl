@@ -27,7 +27,10 @@ function startup(port::Int = 8000, host = "127.0.0.1"; ws_port = port + 1, async
 
   web_server = HTTP.Servers.Server((req) -> begin
     setup_http_handler(req, req.response)
-  end, devnull)
+  end, devnull; ratelimit=0//1)
+  @show "HERE!"
+  @show web_server.options
+  @info web_server.options
 
   if async
     @async HTTP.Servers.serve(web_server, host, port)
