@@ -86,7 +86,7 @@ function log(message::Union{String,Symbol,Number,Exception}, level::Union{String
   # Just a check in case it wasn't initialized.
   global _isloggingconfigured
   if !_isloggingconfigured
-    initializeLogging()
+    initialize_logging()
   end
 
   try
